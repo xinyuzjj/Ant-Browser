@@ -301,7 +301,7 @@ func DefaultConfig() *Config {
 		Logging: LoggingConfig{
 			Level: "info",
 			// 默认开启文件日志与轮转，便于排查插件持久安装、内核启动等启动期问题；
-			// 轮转策略与 config.yaml 保持一致，磁盘占用有上限。
+			// 轮转上限 20MB × 3 份 + 7 天，占用可控。
 			FileEnabled:     true,
 			FilePath:        "data/logs/app.log",
 			Format:          "text",
@@ -310,9 +310,9 @@ func DefaultConfig() *Config {
 			FlushIntervalMs: 1000,
 			Rotation: RotationConfig{
 				Enabled:      true,
-				MaxSizeMB:    100,
+				MaxSizeMB:    20,
 				MaxAge:       7,
-				MaxBackups:   5,
+				MaxBackups:   3,
 				TimeInterval: "daily",
 			},
 			Interceptor: InterceptorConfig{

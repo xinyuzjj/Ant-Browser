@@ -14,17 +14,19 @@ runtime:
   gc_percent: 100
 logging:
   level: info
-  file_enabled: false
+  # 默认开启文件日志与轮转：插件持久安装失败、内核启动失败等问题在界面上往往不可见，
+  # 没有日志只能靠复现。轮转上限 20MB × 3 份 + 7 天，占用可控。
+  file_enabled: true
   file_path: data/logs/app.log
   format: text
   buffer_size: 4
   async_queue_size: 1000
   flush_interval_ms: 1000
   rotation:
-    enabled: false
-    max_size_mb: 100
+    enabled: true
+    max_size_mb: 20
     max_age: 7
-    max_backups: 5
+    max_backups: 3
     time_interval: daily
   interceptor:
     enabled: true

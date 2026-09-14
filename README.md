@@ -290,6 +290,17 @@ bat\publish.bat -Target WINDOWS -WindowsFormat BOTH
 
 省略 `-WindowsFormat` 时等同于 `INSTALLER`。`zip` 快捷命令只生成便携 ZIP，`both` 快捷命令同时生成安装包和便携 ZIP。安装包和便携 ZIP 输出到 `publish\output\`。
 
+### GitHub Actions 自动构建 Windows 发布包
+
+仓库内置 `.github/workflows/publish-windows.yml`，在 GitHub 托管的 `windows-latest` 上自动完成测试、编译、NSIS 打包与发布，无需本地环境。
+
+两种触发方式：
+
+- **推送标签**：`git tag v1.8.1 && git push origin v1.8.1`，自动构建并创建对应版本的 Release。
+- **手动触发**：在 `Actions > Publish Windows Packages > Run workflow` 中填写版本号，并勾选是否创建 Release。
+
+产物包含 `AntBrowser-Setup-<version>.exe`（NSIS 安装包）和 `AntBrowser-<version>-windows-amd64-portable.zip`（便携包），同时作为 Actions Artifact 保留，方便在不发 Release 的情况下取用。
+
 ### Linux 发布打包（源码）
 
 Linux 发布脚本位于 `publish/linux/`。

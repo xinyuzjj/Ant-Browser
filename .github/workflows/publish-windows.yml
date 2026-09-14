@@ -1,0 +1,180 @@
+name: Publish Windows Packages
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Optional package version override, for example 1.8.1
+        required: false
+        type: string
+      publish_release:
+        description: Create or update the GitHub Release for this version
+        required: false
+        type: boolean
+        default: true
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: publish-windows-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build Windows amd64
+    runs-on: windows-latest
+    outputs:
+      version: ${{ steps.version.outputs.value }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install NSIS
+        shell: pwsh
+        run: |
+          choco install nsis --no-progress -y
+          $makensis = 'C:\Program Files (x86)\NSIS\makensis.exe'
+          if (-not (Test-Path -LiteralPath $makensis -PathType Leaf)) {
+            throw "NSIS 安装失败，未找到 $makensis"
+          }
+          Write-Host "NSIS 已就绪: $makensis"
+
+      - name: Install Wails CLI
+        shell: pwsh
+        run: go install github.com/wailsapp/wails/v2/cmd/wails@v2.12.0
+
+      - name: Add Go bin to PATH
+        shell: pwsh
+        run: Add-Content -Path $env:GITHUB_PATH -Value (Join-Path (go env GOPATH) 'bin')
+
+      - name: Run Go tests
+        shell: pwsh
+        run: go test ./backend/... ./internal/...
+
+      - name: Resolve package version
+        id: version
+        shell: pwsh
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+        run: |
+          $version = [string]$env:INPUT_VERSION
+          if ([string]::IsNullOrWhiteSpace($version)) {
+            $version = [string](Get-Content -LiteralPath 'wails.json' -Raw | ConvertFrom-Json).info.productVersion
+          }
+          $version = $version.Trim()
+          if ($version -notmatch '^\d+\.\d+\.\d+') {
+            throw "无法解析版本号: '$version'"
+          }
+          Write-Host "版本号: $version"
+          "value=$version" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+
+      - name: Build Windows packages
+        shell: pwsh
+        env:
+          VERSION: ${{ steps.version.outputs.value }}
+          NO_PAUSE: "1"
+          CI: "1"
+        run: |
+          pwsh -NoProfile -ExecutionPolicy Bypass -File bat/publish.ps1 -Target W -Version $env:VERSION -WindowsFormat BOTH
+
+      - name: Validate Windows packages
+        shell: pwsh
+        env:
+          VERSION: ${{ steps.version.outputs.value }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+
+          $installer = "publish/output/AntBrowser-Setup-$env:VERSION.exe"
+          if (-not (Test-Path -LiteralPath $installer -PathType Leaf)) {
+            throw "缺少安装包: $installer"
+          }
+          $installerSize = (Get-Item -LiteralPath $installer).Length
+          if ($installerSize -lt 5MB) {
+            throw "安装包体积异常: $installerSize 字节"
+          }
+          Write-Host ("安装包: {0} ({1:N1} MB)" -f $installer, ($installerSize / 1MB))
+
+          $zip = "publish/output/AntBrowser-$env:VERSION-windows-amd64-portable.zip"
+          if (-not (Test-Path -LiteralPath $zip -PathType Leaf)) {
+            throw "缺少便携包: $zip"
+          }
+          Add-Type -AssemblyName System.IO.Compression.FileSystem
+          $archive = [System.IO.Compression.ZipFile]::OpenRead((Resolve-Path -LiteralPath $zip).Path)
+          try {
+            $entries = @($archive.Entries | ForEach-Object { $_.FullName })
+            foreach ($required in @('ant-chrome.exe', 'config.yaml', 'bin/xray.exe', 'bin/sing-box.exe')) {
+              $matched = $entries | Where-Object {
+                $_.EndsWith($required, [System.StringComparison]::OrdinalIgnoreCase)
+              }
+              if (-not $matched) {
+                throw "便携包缺少必需文件: $required"
+              }
+            }
+            Write-Host ("便携包校验通过，条目数: {0}" -f $entries.Count)
+          }
+          finally {
+            $archive.Dispose()
+          }
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ant-browser-windows-amd64
+          path: |
+            publish/output/AntBrowser-Setup-*.exe
+            publish/output/AntBrowser-*-windows-amd64-portable.zip
+          if-no-files-found: error
+
+  release:
+    name: Publish GitHub Release
+    needs: build
+    if: ${{ startsWith(github.ref, 'refs/tags/v') || inputs.publish_release }}
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Resolve release tag
+        id: tag
+        env:
+          REF_TYPE: ${{ github.ref_type }}
+          REF_NAME: ${{ github.ref_name }}
+          BUILD_VERSION: ${{ needs.build.outputs.version }}
+        run: |
+          set -euo pipefail
+          if [[ "$REF_TYPE" == "tag" ]]; then
+            echo "value=$REF_NAME" >> "$GITHUB_OUTPUT"
+          else
+            echo "value=v$BUILD_VERSION" >> "$GITHUB_OUTPUT"
+          fi
+          cat "$GITHUB_OUTPUT"
+
+      - name: Download Windows artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: release-artifacts
+          merge-multiple: true
+
+      - name: Upload release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG_NAME: ${{ steps.tag.outputs.value }}
+        run: |
+          set -euo pipefail
+          gh release view "$TAG_NAME" >/dev/null 2>&1 || gh release create "$TAG_NAME" --title "Ant Browser $TAG_NAME" --generate-notes
+          gh release upload "$TAG_NAME" release-artifacts/* --clobber

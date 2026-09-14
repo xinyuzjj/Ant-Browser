@@ -9,7 +9,7 @@
 - 插件旧记录解析：`Secure Preferences` 在实例启动时只解析一次，不再对插件库中的每个插件重复读取与反序列化。
 - 内核扫描：启动序列中 `chrome/` 目录只扫描一次，`autoDetectCores` 复用 `ensureDefaultCores` 的扫描结果；手动重扫仍获取最新目录状态。
 - 启动失败提示：GUI 宿主创建失败（例如缺少 WebView2 运行时）时弹出原生对话框并给出修复指引，不再静默退出。
-- 日志默认开启：`logging.file_enabled` 与 `logging.rotation.enabled` 默认改为开启，插件安装与内核启动类问题可直接从 `data/logs/app.log` 排查。
+- 日志默认开启：`logging.file_enabled` 与 `logging.rotation.enabled` 默认改为开启，轮转上限收紧为 20MB × 3 份 + 7 天，插件安装与内核启动类问题可直接从 `data/logs/app.log` 排查，磁盘占用可控。
 
 ## 1.8.0 - 2026-09-03
 
