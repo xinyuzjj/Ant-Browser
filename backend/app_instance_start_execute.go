@@ -120,6 +120,23 @@ func (a *App) startBrowserProfileWithPlan(input browserStartInput, plan *browser
 
 		startErr := fmt.Errorf("%s", describeBrowserReadyFailure(plan.chromeBinaryPath, plan.assignedDebugPort, plan.totalReadyTimeout, readyErr))
 		lastStartErr = startErr
+
+		// 可重试的中间状态不记 ERROR：这是设计内的重试，第 1 次未就绪很常见
+		// （实测冷启动约 3.5s，而单次就绪等待只有 3s），但记成 ERROR 会让
+		// 一次最终成功的启动在日志页里显示成故障。只有确定不再重试时才升级为 ERROR。
+		if attempt < plan.maxStartAttempts && shouldRetryBrowserReadyFailure(readyErr) {
+			log.Warn("浏览器启动未就绪，继续检测",
+				logger.F("profile_id", input.ProfileID),
+				logger.F("debug_port", plan.assignedDebugPort),
+				logger.F("attempt", attempt),
+				logger.F("next_attempt", attempt+1),
+				logger.F("max_attempts", plan.maxStartAttempts),
+				logger.F("timeout_ms", plan.startReadyTimeout.Milliseconds()),
+				logger.F("error", readyErr.Error()),
+			)
+			continue
+		}
+
 		log.Error("浏览器启动未就绪",
 			logger.F("profile_id", input.ProfileID),
 			logger.F("chrome", plan.chromeBinaryPath),
@@ -129,18 +146,6 @@ func (a *App) startBrowserProfileWithPlan(input browserStartInput, plan *browser
 			logger.F("error", readyErr.Error()),
 			logger.F("reason", startErr.Error()),
 		)
-
-		if attempt < plan.maxStartAttempts && shouldRetryBrowserReadyFailure(readyErr) {
-			log.Warn("浏览器启动未就绪，继续检测",
-				logger.F("profile_id", input.ProfileID),
-				logger.F("debug_port", plan.assignedDebugPort),
-				logger.F("attempt", attempt),
-				logger.F("next_attempt", attempt+1),
-				logger.F("max_attempts", plan.maxStartAttempts),
-				logger.F("timeout_ms", plan.startReadyTimeout.Milliseconds()),
-			)
-			continue
-		}
 
 		break
 	}
