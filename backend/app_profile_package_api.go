@@ -142,11 +142,8 @@ type profilePackageExistingProfiles struct {
 	UsedIDs map[string]struct{}
 }
 
-type profilePackageDirectorySwap struct {
-	FinalDir    string
-	BackupDir   string
-	HadOriginal bool
-}
+// profilePackageDirectorySwap 复用通用的目录原子替换记录，见 directory_swap.go。
+type profilePackageDirectorySwap = directorySwap
 
 // BrowserProfilePackageExport 导出选中的实例配置和浏览器用户数据目录。
 func (a *App) BrowserProfilePackageExport(profileIds []string) (ProfilePackageExportResult, error) {
@@ -1177,54 +1174,19 @@ func replaceProfileUserDataDir(stagingDir string, finalDir string) error {
 }
 
 func replaceProfileUserDataDirWithBackup(stagingDir string, finalDir string) (profilePackageDirectorySwap, error) {
-	if strings.TrimSpace(stagingDir) == "" || strings.TrimSpace(finalDir) == "" {
-		return profilePackageDirectorySwap{}, fmt.Errorf("用户数据目录不能为空")
-	}
-	if err := os.MkdirAll(filepath.Dir(finalDir), 0o755); err != nil {
-		return profilePackageDirectorySwap{}, fmt.Errorf("创建用户数据父目录失败: %w", err)
-	}
-	backupDir := finalDir + ".profile-package-backup-" + uuid.NewString()
-	swap := profilePackageDirectorySwap{
-		FinalDir:  finalDir,
-		BackupDir: backupDir,
-	}
-	if _, err := os.Stat(finalDir); err == nil {
-		swap.HadOriginal = true
-		if err := os.Rename(finalDir, backupDir); err != nil {
-			return profilePackageDirectorySwap{}, fmt.Errorf("备份现有用户数据目录失败: %w", err)
-		}
-	} else if err != nil && !os.IsNotExist(err) {
-		return profilePackageDirectorySwap{}, fmt.Errorf("检查用户数据目录失败: %w", err)
-	}
-	if err := os.Rename(stagingDir, finalDir); err != nil {
-		if swap.HadOriginal {
-			_ = os.Rename(backupDir, finalDir)
-		}
-		return profilePackageDirectorySwap{}, fmt.Errorf("提交用户数据目录失败: %w", err)
+	swap, err := replaceDirectoryWithBackup(stagingDir, finalDir, "profile-package-backup")
+	if err != nil {
+		return profilePackageDirectorySwap{}, err
 	}
 	return swap, nil
 }
 
 func finalizeProfilePackageDirectorySwaps(swaps []profilePackageDirectorySwap) {
-	for _, swap := range swaps {
-		if !swap.HadOriginal || strings.TrimSpace(swap.BackupDir) == "" {
-			continue
-		}
-		_ = os.RemoveAll(swap.BackupDir)
-	}
+	finalizeDirectorySwaps(swaps)
 }
 
 func rollbackProfilePackageDirectorySwaps(swaps []profilePackageDirectorySwap) {
-	for index := len(swaps) - 1; index >= 0; index-- {
-		swap := swaps[index]
-		if strings.TrimSpace(swap.FinalDir) == "" {
-			continue
-		}
-		_ = os.RemoveAll(swap.FinalDir)
-		if swap.HadOriginal && strings.TrimSpace(swap.BackupDir) != "" {
-			_ = os.Rename(swap.BackupDir, swap.FinalDir)
-		}
-	}
+	rollbackDirectorySwaps(swaps)
 }
 
 func (a *App) profilePackageImportStagingRoot(batchID string) string {

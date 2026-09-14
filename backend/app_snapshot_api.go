@@ -1,6 +1,7 @@
 package backend
 
 import (
+	"ant-chrome/backend/internal/logger"
 	"ant-chrome/backend/internal/snapshot"
 	"encoding/json"
 	"fmt"
@@ -115,8 +116,15 @@ func (a *App) BrowserSnapshotList(profileId string) ([]SnapshotInfo, error) {
 	return list, nil
 }
 
-// BrowserSnapshotRestore 恢复快照
+// BrowserSnapshotRestore 恢复快照。
+//
+// 恢复采用「暂存解压 + 校验 + 原子替换 + 失败回滚」：先解压到用户数据目录同级的暂存目录，
+// 校验通过后才原子替换原目录，且原目录会保留为
+// <userDataDir>.snapshot-restore-backup-<uuid>。因此恢复失败不会造成不可逆的数据丢失。
 func (a *App) BrowserSnapshotRestore(profileId, snapshotId string) error {
+	a.maintenanceMu.Lock()
+	defer a.maintenanceMu.Unlock()
+
 	profile, err := a.getProfileForSnapshot(profileId)
 	if err != nil {
 		return err
@@ -130,20 +138,27 @@ func (a *App) BrowserSnapshotRestore(profileId, snapshotId string) error {
 		return err
 	}
 
-	metaPath, zipPath, err := snapshot.FindFiles(snapDir, snapshotId)
+	_, zipPath, err := snapshot.FindFiles(snapDir, snapshotId)
 	if err != nil {
 		return err
 	}
-	_ = metaPath
 
+	log := logger.New("Snapshot")
 	userDataDir := a.browserMgr.ResolveUserDataDir(profile)
-	if err := os.RemoveAll(userDataDir); err != nil {
-		return fmt.Errorf("清空用户数据目录失败: %w", err)
-	}
-	if err := os.MkdirAll(userDataDir, 0o755); err != nil {
+	backupDir, err := restoreUserDataDirFromZip(zipPath, userDataDir)
+	if err != nil {
+		log.Error("快照恢复失败",
+			logger.F("profile_id", profileId),
+			logger.F("snapshot_id", snapshotId),
+			logger.F("error", err.Error()))
 		return err
 	}
-	return snapshot.UnzipTo(zipPath, userDataDir)
+
+	log.Info("快照恢复完成",
+		logger.F("profile_id", profileId),
+		logger.F("snapshot_id", snapshotId),
+		logger.F("backup_dir", backupDir))
+	return nil
 }
 
 // BrowserSnapshotDelete 删除快照

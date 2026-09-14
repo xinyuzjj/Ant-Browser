@@ -4,6 +4,7 @@ import { Button, Card, Input, Table, toast } from '../../../shared/components'
 import type { TableColumn } from '../../../shared/components/Table'
 import type { SnapshotInfo } from '../types'
 import { createSnapshot, deleteSnapshot, listSnapshots, restoreSnapshot } from '../api'
+import { errorMessage } from '../../../utils/errorMessage'
 
 interface Props {
   profileId: string
@@ -51,8 +52,8 @@ export function SnapshotTab({ profileId, running }: Props) {
       toast.success('快照创建成功')
       setNewName(defaultName())
       await load()
-    } catch {
-      toast.error('快照创建失败')
+    } catch (error) {
+      toast.error(errorMessage(error, '快照创建失败'))
     } finally {
       setCreating(false)
     }
@@ -63,8 +64,8 @@ export function SnapshotTab({ profileId, running }: Props) {
     try {
       await restoreSnapshot(profileId, snapshotId)
       toast.success('快照恢复成功')
-    } catch {
-      toast.error('快照恢复失败')
+    } catch (error) {
+      toast.error(errorMessage(error, '快照恢复失败'))
     } finally {
       setActionLoading(null)
       setConfirmRestore(null)
@@ -77,8 +78,8 @@ export function SnapshotTab({ profileId, running }: Props) {
       await deleteSnapshot(profileId, snapshotId)
       toast.success('快照已删除')
       await load()
-    } catch {
-      toast.error('快照删除失败')
+    } catch (error) {
+      toast.error(errorMessage(error, '快照删除失败'))
     } finally {
       setActionLoading(null)
       setConfirmDelete(null)
@@ -97,7 +98,7 @@ export function SnapshotTab({ profileId, running }: Props) {
         if (confirmRestore === sid) {
           return (
             <div className="flex items-center gap-2 text-sm">
-              <span className="text-[var(--color-text-muted)]">确认恢复？数据将被覆盖</span>
+              <span className="text-[var(--color-text-muted)]">确认恢复？当前数据将被覆盖，并保留一份备份</span>
               <Button size="sm" onClick={() => handleRestore(sid)} disabled={actionLoading === sid}>确认</Button>
               <Button size="sm" variant="ghost" onClick={() => setConfirmRestore(null)}>取消</Button>
             </div>
