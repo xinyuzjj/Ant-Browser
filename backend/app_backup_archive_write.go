@@ -63,7 +63,7 @@ func backupWritePackageZip(zipPath string, scope backup.Scope, manifest backup.M
 			entryStats := newBackupArchiveStats()
 			if info.IsDir() {
 				var err error
-				entryStats, err = backupZipAddDir(w, entry.SourcePath, entry.ArchivePath, zipPath, metadataPath)
+				entryStats, err = backupZipAddDir(w, entry.SourcePath, entry.ArchivePath, zipPath, metadataPath, backupShouldSkipTransientPath)
 				if err != nil {
 					return fmt.Errorf("写入目录失败(%s): %w", entry.ID, err)
 				}
@@ -139,7 +139,7 @@ func backupWritePackageZip(zipPath string, scope backup.Scope, manifest backup.M
 	return includedEntries, skippedEntries, fileCount, nil
 }
 
-func backupZipAddDir(w *zip.Writer, srcDir, archiveBase, outputZipPath, outputMetadataPath string) (backupArchiveStats, error) {
+func backupZipAddDir(w *zip.Writer, srcDir, archiveBase, outputZipPath, outputMetadataPath string, shouldSkip func(rel string) bool) (backupArchiveStats, error) {
 	base := strings.TrimSuffix(filepath.ToSlash(strings.TrimSpace(archiveBase)), "/")
 	if base == "" {
 		return backupArchiveStats{}, fmt.Errorf("archive base 不能为空")
@@ -166,6 +166,12 @@ func backupZipAddDir(w *zip.Writer, srcDir, archiveBase, outputZipPath, outputMe
 			return nil
 		}
 		rel = filepath.ToSlash(rel)
+		if shouldSkip != nil && shouldSkip(rel) {
+			if d.IsDir() {
+				return filepath.SkipDir
+			}
+			return nil
+		}
 		targetName := base + "/" + rel
 		if d.IsDir() {
 			_, err := w.Create(strings.TrimSuffix(targetName, "/") + "/")
