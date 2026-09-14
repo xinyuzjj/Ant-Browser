@@ -2,9 +2,9 @@
 
 > 面向多账号隔离、代理绑定和本地环境管理的桌面浏览器工具（Windows / Linux / macOS unsigned）。
 
-[![Release](https://img.shields.io/github/v/release/black-ant/Ant-Browser?sort=semver)](https://github.com/black-ant/Ant-Browser/releases)
-[![Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20Linux%20%7C%20macOS-blue)](https://github.com/black-ant/Ant-Browser/releases)
-[![Issues](https://img.shields.io/github/issues/black-ant/Ant-Browser)](https://github.com/black-ant/Ant-Browser/issues)
+[![Release](https://img.shields.io/github/v/release/xinyuzjj/Ant-Browser?sort=semver)](https://github.com/xinyuzjj/Ant-Browser/releases)
+[![Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20Linux%20%7C%20macOS-blue)](https://github.com/xinyuzjj/Ant-Browser/releases)
+[![Issues](https://img.shields.io/github/issues/xinyuzjj/Ant-Browser)](https://github.com/xinyuzjj/Ant-Browser/issues)
 
 当前版本：`1.8.1` · 2026-09-14
 
@@ -213,7 +213,7 @@ Ant Browser 适合以下场景：
 
 ### 下载与运行
 
-1. 前往 Releases 页面下载最新版本：<https://github.com/black-ant/Ant-Browser/releases>
+1. 前往 Releases 页面下载最新版本：<https://github.com/xinyuzjj/Ant-Browser/releases>
 2. 安装版直接运行 `AntBrowser-Setup-*.exe`
 3. 便携版解压后运行 `ant-chrome.exe`
 4. Linux 包下载后可直接安装 `ant-browser_<version>_<arch>.deb`，或解压 `tar.gz` 后运行 `ant-chrome`
@@ -422,8 +422,8 @@ OpenList Token 和 S3 访问凭据保存在本机的 `backup.local.yaml`，不�
 
 ## 支持与反馈
 
-- Releases：<https://github.com/black-ant/Ant-Browser/releases>
-- Issues：<https://github.com/black-ant/Ant-Browser/issues>
+- Releases：<https://github.com/xinyuzjj/Ant-Browser/releases>
+- Issues：<https://github.com/xinyuzjj/Ant-Browser/issues>
 - 感谢以下社区的支持：<https://linux.do/>
 
 ## License
