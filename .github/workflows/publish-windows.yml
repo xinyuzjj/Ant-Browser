@@ -149,6 +149,11 @@ jobs:
     runs-on: ubuntu-24.04
 
     steps:
+      # gh 需要在一个 git 仓库里执行才能推断目标仓库，缺少 checkout 会报
+      # "failed to run git: fatal: not a git repository"。
+      - name: Checkout
+        uses: actions/checkout@v4
+
       - name: Resolve release tag
         id: tag
         env:
