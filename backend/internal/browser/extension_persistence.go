@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -11,14 +12,50 @@ import (
 	"path/filepath"
 	"runtime"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 )
 
 const (
-	extensionInstallerTimeout = 20 * time.Second
-	extensionBackupRoot       = "extension-backups"
+	extensionBackupRoot = "extension-backups"
+
+	// extensionInstallerDefaultTimeout 是等待 Chrome 完成外部插件安装的默认上限。
+	// 首次安装需要冷启动内核再下载/解包 CRX，原先的 20s 在低配机器或网络较慢时偏紧；
+	// 一旦超时就会触发"备份 + 回滚"的重 I/O 流程并留下失败记录，因此放宽到 60s。
+	extensionInstallerDefaultTimeout = 60 * time.Second
+	// extensionInstallerMinTimeout / extensionInstallerMaxTimeout 约束环境变量覆盖的合理区间。
+	extensionInstallerMinTimeout = 5 * time.Second
+	extensionInstallerMaxTimeout = 5 * time.Minute
 )
+
+// extensionInstallerTimeout 支持通过 ANT_BROWSER_EXTENSION_INSTALL_TIMEOUT_MS 覆盖，
+// 便于在极慢磁盘或网络环境下调整等待上限而无需重新编译。
+var extensionInstallerTimeout = resolveExtensionInstallerTimeout()
+
+// extensionInstallFailureBackoff 是插件持久安装失败后的重试冷却时间。
+// 一次失败要付出"备份 + 冷启动内核等待 + 回滚"的完整代价，
+// 冷却期内直接复用上次的错误，避免每次启动实例都重复付出这份代价。
+var extensionInstallFailureBackoff = 2 * time.Minute
+
+func resolveExtensionInstallerTimeout() time.Duration {
+	raw := strings.TrimSpace(os.Getenv("ANT_BROWSER_EXTENSION_INSTALL_TIMEOUT_MS"))
+	if raw == "" {
+		return extensionInstallerDefaultTimeout
+	}
+	milliseconds, err := strconv.Atoi(raw)
+	if err != nil || milliseconds <= 0 {
+		return extensionInstallerDefaultTimeout
+	}
+	timeout := time.Duration(milliseconds) * time.Millisecond
+	if timeout < extensionInstallerMinTimeout {
+		return extensionInstallerMinTimeout
+	}
+	if timeout > extensionInstallerMaxTimeout {
+		return extensionInstallerMaxTimeout
+	}
+	return timeout
+}
 
 type extensionLegacySetting struct {
 	Location int    `json:"location"`
@@ -67,6 +104,11 @@ func (m *Manager) PrepareProfileExtensions(profile *Profile, chromeBinaryPath st
 	desired := make(map[string]Extension, len(extensions))
 	for _, extension := range extensions {
 		desired[extension.ExtensionID] = extension
+		// 冷却期内直接复用上次的失败结果，避免每次启动实例都重复付出等待与回滚的代价。
+		if reason := m.extensionInstallFailureReason(profile.ProfileId, extension); reason != "" {
+			warnings = append(warnings, errors.New(reason))
+			continue
+		}
 		if _, installErr := m.ensurePersistentExtensionInstalled(profile, userDataDir, chromeBinaryPath, extension, installArgs); installErr != nil {
 			warnings = append(warnings, installErr)
 			continue
@@ -99,16 +141,17 @@ func (m *Manager) PrepareProfileExtensions(profile *Profile, chromeBinaryPath st
 		warnings = append(warnings, fmt.Errorf("读取插件列表失败：%w", err))
 		return nil, warnings
 	}
+	// Secure Preferences 只解析一次：原先在循环里逐个插件重复读取解析，
+	// 插件库越大启动越慢，每个插件都要多付一次完整 JSON 解析的代价。
+	preferencesIndex, preferencesErr := loadExtensionPreferencesIndex(userDataDir)
+	if preferencesErr != nil {
+		warnings = append(warnings, fmt.Errorf("读取插件旧安装记录失败：%w", preferencesErr))
+	}
 	for _, extension := range allExtensions {
 		if _, ok := desired[extension.ExtensionID]; ok {
 			continue
 		}
-		legacyIDs, legacyErr := findLegacyRuntimeExtensionIDs(userDataDir, extension.InstallDir)
-		if legacyErr != nil {
-			warnings = append(warnings, fmt.Errorf("查找旧版插件目录失败（%s）：%w", extension.ExtensionID, legacyErr))
-			continue
-		}
-		for _, runtimeID := range legacyIDs {
+		for _, runtimeID := range preferencesIndex.legacyRuntimeIDsForInstallDir(extension.InstallDir) {
 			if err := cleanupProfileExtensionRuntime(userDataDir, runtimeID); err != nil {
 				warnings = append(warnings, fmt.Errorf("清理旧版插件目录失败（%s）：%w", runtimeID, err))
 			}
@@ -117,6 +160,40 @@ func (m *Manager) PrepareProfileExtensions(profile *Profile, chromeBinaryPath st
 
 	return nil, warnings
 }
+
+// extensionInstallFailureReason 判断是否处于安装失败冷却期。
+// 命中时返回上次的错误文案（供上层继续向用户提示），否则返回空串表示可以重试。
+//
+// 只有在"上次确实是失败状态 + 错误非空 + 插件版本未变化 + 距上次尝试小于冷却时间"
+// 四个条件同时成立时才复用结果；插件版本一变就立刻重试，避免版本升级被误挡。
+func (m *Manager) extensionInstallFailureReason(profileID string, extension Extension) string {
+	if m == nil || m.ExtensionDAO == nil {
+		return ""
+	}
+	runtimeState, err := m.ExtensionDAO.GetProfileExtensionRuntime(profileID, extension.ExtensionID)
+	if err != nil {
+		return ""
+	}
+	if runtimeState.Status != ExtensionRuntimeStatusError {
+		return ""
+	}
+	lastError := strings.TrimSpace(runtimeState.LastError)
+	if lastError == "" {
+		return ""
+	}
+	if strings.TrimSpace(runtimeState.InstalledVersion) != strings.TrimSpace(extension.Version) {
+		return ""
+	}
+	attemptedAt, parseErr := time.Parse(time.RFC3339, strings.TrimSpace(runtimeState.UpdatedAt))
+	if parseErr != nil {
+		return ""
+	}
+	if time.Since(attemptedAt) >= extensionInstallFailureBackoff {
+		return ""
+	}
+	return lastError
+}
+
 func (m *Manager) RemoveExtensionFromStoppedProfiles(extensionID string) error {
 	if m == nil || m.ExtensionDAO == nil {
 		return nil
@@ -313,6 +390,14 @@ func (m *Manager) ensurePersistentExtensionInstalled(profile *Profile, userDataD
 		legacyRuntimeIDs = append(legacyRuntimeIDs, runtimeState.RuntimeExtensionID)
 	}
 	legacyRuntimeIDs = uniqueExtensionIDs(legacyRuntimeIDs)
+
+	// 安装前先清理"有记录无目录"的外部插件残留（连同 MAC 保护项）。
+	// 否则 Chrome 会认为插件已经安装而跳过重新下载，安装进程只能一路等到超时；
+	// 这一步必须发生在备份之前，这样失败回滚恢复的是一份干净配置，不会再次自锁。
+	repairTargets := append([]string{NormalizeExtensionID(extension.ExtensionID)}, legacyRuntimeIDs...)
+	if _, repairErr := repairStaleExternalExtensionSettings(userDataDir, repairTargets); repairErr != nil {
+		return "", fmt.Errorf("清理插件陈旧注册记录失败：%w", repairErr)
+	}
 
 	backupPath, err := m.backupProfileExtensionState(profile.ProfileId, extension.ExtensionID, userDataDir, legacyRuntimeIDs)
 	if err != nil {
@@ -1131,7 +1216,15 @@ func persistentExtensionArtifactMatches(userDataDir string, runtimeExtensionID s
 	return persistentExtensionArtifactPath(userDataDir, runtimeExtensionID, version) != ""
 }
 
-func findLegacyRuntimeExtensionIDs(userDataDir string, installDir string) ([]string, error) {
+// extensionPreferencesIndex 是一次性解析出的 Secure Preferences 插件记录索引。
+// 把解析结果缓存下来复用，避免遍历插件库时对同一份 JSON 反复读取与反序列化。
+type extensionPreferencesIndex struct {
+	settings map[string]extensionLegacySetting
+}
+
+// loadExtensionPreferencesIndex 解析 Secure Preferences 中的插件记录。
+// 文件不存在时返回 nil 索引（合法状态），调用方通过 nil 接收者方法安全降级。
+func loadExtensionPreferencesIndex(userDataDir string) (*extensionPreferencesIndex, error) {
 	preferencesPath := filepath.Join(userDataDir, "Default", "Secure Preferences")
 	data, err := os.ReadFile(preferencesPath)
 	if err != nil {
@@ -1144,9 +1237,17 @@ func findLegacyRuntimeExtensionIDs(userDataDir string, installDir string) ([]str
 	if err := json.Unmarshal(data, &preferences); err != nil {
 		return nil, fmt.Errorf("读取插件旧安装记录失败: %w", err)
 	}
+	return &extensionPreferencesIndex{settings: preferences.Extensions.Settings}, nil
+}
+
+// legacyRuntimeIDsForInstallDir 返回安装目录匹配的旧版外部插件 runtimeID。
+func (idx *extensionPreferencesIndex) legacyRuntimeIDsForInstallDir(installDir string) []string {
+	if idx == nil || len(idx.settings) == 0 {
+		return nil
+	}
 	installDir = filepath.Clean(strings.TrimSpace(installDir))
 	ids := make([]string, 0)
-	for extensionID, setting := range preferences.Extensions.Settings {
+	for extensionID, setting := range idx.settings {
 		if !extensionIDPattern.MatchString(extensionID) || (setting.Location != 3 && setting.Location != 8) {
 			continue
 		}
@@ -1158,7 +1259,15 @@ func findLegacyRuntimeExtensionIDs(userDataDir string, installDir string) ([]str
 			ids = append(ids, extensionID)
 		}
 	}
-	return uniqueExtensionIDs(ids), nil
+	return uniqueExtensionIDs(ids)
+}
+
+func findLegacyRuntimeExtensionIDs(userDataDir string, installDir string) ([]string, error) {
+	index, err := loadExtensionPreferencesIndex(userDataDir)
+	if err != nil {
+		return nil, err
+	}
+	return index.legacyRuntimeIDsForInstallDir(installDir), nil
 }
 
 func (m *Manager) backupProfileExtensionState(profileID string, extensionID string, userDataDir string, runtimeIDs []string) (string, error) {
@@ -1203,6 +1312,9 @@ func (m *Manager) backupProfileExtensionState(profileID string, extensionID stri
 			return "", fmt.Errorf("备份插件配置失败: %w", err)
 		}
 	}
+	// 每次产生新备份后顺手清理历史快照，避免备份目录无上限增长。
+	// 清理失败不影响本次安装流程，新备份本身已经落盘。
+	_, _ = m.pruneExtensionBackups(backupRoot)
 	return backupRoot, nil
 }
 
@@ -1290,6 +1402,11 @@ func restoreProfileExtensionState(userDataDir string, backupPath string, legacyR
 			return err
 		}
 	}
+	// 备份里可能仍携带陈旧的外部插件记录，恢复后再清一遍，杜绝自锁复发。
+	repairProfileExtensionSettingsAfterRestore(
+		userDataDir,
+		uniqueExtensionIDs(append(append([]string{}, legacyRuntimeIDs...), runtimeExtensionID)),
+	)
 	return nil
 }
 

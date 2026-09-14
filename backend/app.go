@@ -57,6 +57,7 @@ type App struct {
 	profileWindowMarkersMu sync.Mutex
 	profileWindowMarkers   map[string]*profileWindowMarker
 	browserProcessMonitors map[string]*browserProcessMonitor
+	coreScanHandoff        coreScanHandoff
 	stopServicesOnce       sync.Once
 	finalizeOnce           sync.Once
 }

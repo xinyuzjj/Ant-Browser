@@ -6,7 +6,7 @@
 [![Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20Linux%20%7C%20macOS-blue)](https://github.com/black-ant/Ant-Browser/releases)
 [![Issues](https://img.shields.io/github/issues/black-ant/Ant-Browser)](https://github.com/black-ant/Ant-Browser/issues)
 
-当前版本：`1.8.0` · 2026-09-03
+当前版本：`1.8.1` · 2026-09-14
 
 ## 推荐内核项目
 
@@ -53,6 +53,13 @@ Ant Browser 适合以下场景：
 - 在本地保存配置和运行数据，便于自主控制
 
 ## 近期更新
+
+### 1.8.1 · 2026-09-14
+
+- 插件持久安装自愈：安装前与回滚后自动清理 `Secure Preferences` 中指向不存在目录的外部插件残留，修复由此引发的“等待浏览器完成插件安装超时”和失败回滚自锁。
+- 插件安装等待与重试：默认等待上限放宽到 60 秒并支持环境变量覆盖；失败后 2 分钟内不再重复整套安装与回滚流程。
+- 插件备份保留策略：`data/extension-backups` 增加保留策略并在启动时后台清理，解决此前无上限增长占用磁盘的问题。
+- 启动与日志：`chrome/` 目录在启动时只扫描一次；GUI 宿主创建失败时弹出原生提示；文件日志与轮转默认开启。
 
 ### 1.8.0 · 2026-09-03
 

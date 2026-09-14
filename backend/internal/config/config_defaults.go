@@ -299,15 +299,17 @@ func DefaultConfig() *Config {
 			Targets:              []ProxyCheckTarget{},
 		},
 		Logging: LoggingConfig{
-			Level:           "info",
-			FileEnabled:     false,
+			Level: "info",
+			// 默认开启文件日志与轮转，便于排查插件持久安装、内核启动等启动期问题；
+			// 轮转策略与 config.yaml 保持一致，磁盘占用有上限。
+			FileEnabled:     true,
 			FilePath:        "data/logs/app.log",
 			Format:          "text",
 			BufferSize:      4,
 			AsyncQueueSize:  1000,
 			FlushIntervalMs: 1000,
 			Rotation: RotationConfig{
-				Enabled:      false,
+				Enabled:      true,
 				MaxSizeMB:    100,
 				MaxAge:       7,
 				MaxBackups:   5,

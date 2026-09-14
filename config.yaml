@@ -14,14 +14,16 @@ runtime:
     gc_percent: 100
 logging:
     level: info
-    file_enabled: false
+    # 默认开启文件日志与轮转：插件持久安装、内核启动等问题的排查高度依赖日志，
+    # 关闭时线上问题只能靠复现。轮转策略已在上方配置，占用有上限。
+    file_enabled: true
     file_path: data/logs/app.log
     format: text
     buffer_size: 4
     async_queue_size: 1000
     flush_interval_ms: 1000
     rotation:
-        enabled: false
+        enabled: true
         max_size_mb: 100
         max_age: 7
         max_backups: 5

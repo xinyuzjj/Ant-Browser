@@ -8,6 +8,7 @@ import (
 	"context"
 	"embed"
 	"encoding/json"
+	"fmt"
 	"log"
 	"os"
 	"path/filepath"
@@ -95,7 +96,6 @@ func (a *App) shouldBlockClose(ctx context.Context) bool {
 func (a *App) BrowserExtensionManualInstallGuide(query string) (backend.BrowserExtensionManualInstallGuide, error) {
 	return a.App.BrowserExtensionManualInstallGuide(query)
 }
-
 func (a *App) BrowserExtensionOpenManualDownloadDir() error {
 	return a.App.BrowserExtensionOpenManualDownloadDir()
 }
@@ -134,6 +134,32 @@ func (a *App) BackupSaveLocalDirectory(directory string) (backend.BackupLocalSet
 
 func (a *App) BackupListLocalBackups(directory string) ([]backend.BackupLocalHistoryItem, error) {
 	return a.App.BackupListLocalBackups(directory)
+}
+
+// describeStartupFailure 把 wails.Run 的原始错误翻译成用户可以直接行动的提示。
+// WebView2 运行时缺失/损坏是 Windows 上最常见的启动失败原因，单独给出修复指引。
+func describeStartupFailure(err error) string {
+	if err == nil {
+		return ""
+	}
+	raw := strings.TrimSpace(err.Error())
+	lowered := strings.ToLower(raw)
+	webView2Failure := strings.Contains(lowered, "webview") ||
+		strings.Contains(lowered, "8000ffff") ||
+		strings.Contains(lowered, "catastrophic failure")
+	if !webView2Failure {
+		return fmt.Sprintf(
+			"应用启动失败：%s\n\n请查看日志目录 data\\logs 下的 app.log 与 app-lifecycle.log 了解详情。",
+			raw,
+		)
+	}
+	return fmt.Sprintf(
+		"应用启动失败：无法创建 WebView2 运行环境。\n\n"+
+			"界面依赖 Microsoft Edge WebView2 Runtime 渲染，请安装或修复后重试：\n"+
+			"https://developer.microsoft.com/microsoft-edge/webview2/\n\n"+
+			"原始错误：%s",
+		raw,
+	)
 }
 
 func main() {
@@ -376,6 +402,11 @@ func main() {
 
 	if err != nil {
 		lifecycle.Log(appRoot, "wails.run.error", map[string]interface{}{"error": err.Error()})
+		// 生产环境下弹原生对话框：否则 GUI 宿主创建失败只会静默退出，
+		// 用户完全看不出原因（最常见的是缺少 WebView2 运行时）。
+		if !isDevMode {
+			lifecycle.ShowFatalErrorDialog(cfg.App.Name, describeStartupFailure(err))
+		}
 		log.Fatal("启动应用失败:", err)
 	}
 	lifecycle.Log(appRoot, "wails.run.returned", nil)

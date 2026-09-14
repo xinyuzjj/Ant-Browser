@@ -150,6 +150,20 @@ func (a *App) startupInitManagers(cfg *config.Config, db *database.DB) {
 	if err := a.browserMgr.CleanupExpiredTrash(); err != nil {
 		logger.New("Browser").Error("启动清理回收站失败", logger.F("error", err))
 	}
+	// 插件备份目录此前没有任何保留策略，长期使用会积累上千个快照、占用上 GB 空间。
+	// 放到受管后台任务执行，既不拖慢启动，也会在退出时被正确等待。
+	if err := a.startBackgroundTask(func(context.Context) {
+		removed, err := a.browserMgr.PruneExtensionBackups()
+		if err != nil {
+			logger.New("Browser").Error("启动清理历史插件备份失败", logger.F("error", err))
+			return
+		}
+		if removed > 0 {
+			logger.New("Browser").Info("已清理历史插件备份", logger.F("removed", removed))
+		}
+	}); err != nil {
+		logger.New("Browser").Warn("启动清理历史插件备份任务未启动", logger.F("error", err))
+	}
 	a.autoDetectCores()
 	a.loadProxies()
 	a.reconcileProfileProxyBindings()

@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -55,11 +56,54 @@ func nextAvailablePort() (int, error) {
 // 内核初始化
 // ============================================================================
 
+// coreScanHandoff 保存最近一次 chrome/ 目录扫描结果，供启动序列中紧邻的
+// autoDetectCores 复用，避免同一个目录在启动时被扫描两次。
+// 结果被取出后立即失效，保证后续手动重扫永远拿到最新目录状态。
+type coreScanHandoff struct {
+	mu    sync.Mutex
+	root  string
+	cores []browser.Core
+	valid bool
+}
+
+func (a *App) storeCoreScanHandoff(root string, cores []browser.Core) {
+	a.coreScanHandoff.mu.Lock()
+	defer a.coreScanHandoff.mu.Unlock()
+	a.coreScanHandoff.root = root
+	a.coreScanHandoff.cores = cores
+	a.coreScanHandoff.valid = true
+}
+
+// takeCoreScanHandoff 取出并清空缓存的扫描结果，root 不匹配时返回 false。
+func (a *App) takeCoreScanHandoff(root string) ([]browser.Core, bool) {
+	a.coreScanHandoff.mu.Lock()
+	defer a.coreScanHandoff.mu.Unlock()
+	if !a.coreScanHandoff.valid || a.coreScanHandoff.root != root {
+		return nil, false
+	}
+	cores := a.coreScanHandoff.cores
+	a.coreScanHandoff.root = ""
+	a.coreScanHandoff.cores = nil
+	a.coreScanHandoff.valid = false
+	return cores, true
+}
+
+// scanChromeDirOnce 优先复用上一次扫描结果；没有可复用的结果时才真正扫描，
+// 并把结果缓存起来等待下一次复用。
+func (a *App) scanChromeDirOnce(chromeRoot string) []browser.Core {
+	if cores, ok := a.takeCoreScanHandoff(chromeRoot); ok {
+		return cores
+	}
+	cores := a.scanChromeDir(chromeRoot)
+	a.storeCoreScanHandoff(chromeRoot, cores)
+	return cores
+}
+
 func (a *App) ensureDefaultCores() {
 	log := logger.New("Browser")
 
 	// 扫描 chrome/ 目录，无论配置是否已有内核都执行一次，确保新增子目录被发现
-	detected := a.scanChromeDir(a.browserCoreRoot())
+	detected := a.scanChromeDirOnce(a.browserCoreRoot())
 
 	if len(a.config.Browser.Cores) == 0 {
 		// 配置为空：直接用扫描结果，或兜底写一个占位
@@ -130,7 +174,7 @@ func (a *App) browserCoreRoot() string {
 
 func (a *App) scanAndRegisterCores() []browser.Core {
 	log := logger.New("Browser")
-	detected := a.scanChromeDir(a.browserCoreRoot())
+	detected := a.scanChromeDirOnce(a.browserCoreRoot())
 	if len(detected) == 0 || a.browserMgr == nil {
 		return detected
 	}
