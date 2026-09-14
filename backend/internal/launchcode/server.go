@@ -104,11 +104,16 @@ type LaunchCallRecord struct {
 
 // LaunchServer 本地 HTTP 唤起服务
 type LaunchServer struct {
-	service     *LaunchCodeService
-	starter     BrowserStarter
-	browserMgr  *browser.Manager
-	port        int
-	server      *http.Server
+	service    *LaunchCodeService
+	starter    BrowserStarter
+	browserMgr *browser.Manager
+	port       int
+	server     *http.Server
+	// listener 由 Start 同步绑定并保存在这里，Stop 时显式关闭。
+	// 只依赖 http.Server.Shutdown 是不够的：Serve 是在 goroutine 里才把 listener
+	// 登记到 server 上，若 Stop 抢在登记之前执行，Shutdown 看不到 listener，
+	// 端口不会立即释放，紧接着重新绑定同一端口会失败。
+	listener    net.Listener
 	mu          sync.Mutex
 	authMu      sync.RWMutex
 	logMu       sync.Mutex
@@ -149,9 +154,12 @@ func (s *LaunchServer) Start() error {
 		return err
 	}
 
+	srv := &http.Server{Handler: handler}
+
 	s.mu.Lock()
 	s.port = port
-	s.server = &http.Server{Handler: handler}
+	s.listener = ln
+	s.server = srv
 	s.mu.Unlock()
 
 	log := logger.New("LaunchServer")
@@ -169,7 +177,8 @@ func (s *LaunchServer) Start() error {
 	log.Info("LaunchServer 已启动", logger.F("port", port))
 
 	go func() {
-		if serveErr := s.server.Serve(ln); serveErr != nil && serveErr != http.ErrServerClosed {
+		// 用局部变量而不是 s.server：Stop 会把 s.server 置空，从字段读取会有数据竞争。
+		if serveErr := srv.Serve(ln); serveErr != nil && serveErr != http.ErrServerClosed {
 			log.Error("LaunchServer 异常退出", logger.F("error", serveErr.Error()))
 		}
 	}()
@@ -218,19 +227,34 @@ func listenerPort(ln net.Listener) (int, error) {
 	return port, nil
 }
 
-// Stop 优雅关闭（5 秒超时）
+// Stop 优雅关闭（5 秒超时），并保证监听端口在返回前已释放。
 func (s *LaunchServer) Stop() error {
 	s.mu.Lock()
 	srv := s.server
+	ln := s.listener
+	s.server = nil
+	s.listener = nil
 	s.mu.Unlock()
 
-	if srv == nil {
+	if srv == nil && ln == nil {
 		return nil
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	return srv.Shutdown(ctx)
+	var shutdownErr error
+	if srv != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		shutdownErr = srv.Shutdown(ctx)
+	}
+
+	if ln != nil {
+		// 兜底关闭 listener。Shutdown 只能关闭已经登记到 http.Server 上的 listener，
+		// 而 Serve 是在 goroutine 里才登记的；若它还没跑起来，端口就不会被释放，
+		// 调用方紧接着重新绑定同一端口会失败。重复关闭返回 net.ErrClosed，可忽略。
+		_ = ln.Close()
+	}
+
+	return shutdownErr
 }
 
 // Port 返回实际绑定的端口
