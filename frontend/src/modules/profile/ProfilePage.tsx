@@ -57,16 +57,13 @@ export function ProfilePage() {
 
   const authorInfo = pageData.author
   const projectInfo = pageData.project
+  // 注意：不能先拼出 "加入于 xxx" 再判空，空值会拼成 "加入于 " 并绕过 trim 过滤。
+  const location = authorInfo.location.trim()
+  const joinDate = authorInfo.joinDate.trim()
   const metaItems = [
-    {
-      label: authorInfo.location,
-      icon: MapPin,
-    },
-    {
-      label: `加入于 ${authorInfo.joinDate}`,
-      icon: Calendar,
-    },
-  ].filter((item) => item.label.trim())
+    location ? { label: location, icon: MapPin } : null,
+    joinDate ? { label: `加入于 ${joinDate}`, icon: Calendar } : null,
+  ].filter((item): item is { label: string; icon: typeof MapPin } => item !== null)
 
   return (
     <div className="mx-auto max-w-5xl space-y-6 animate-fade-in">

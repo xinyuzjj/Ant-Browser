@@ -5,14 +5,14 @@
   "frontend:install": "npm install && npm run ensure:native",
   "frontend:build": "npm run build:clean",
   "author": {
-    "name": "Ant Chrome Team",
-    "email": "contact@antblack.de"
+    "name": "junjunni",
+    "email": "1105002234@qq.com"
   },
   "info": {
-    "companyName": "Ant Chrome",
+    "companyName": "Ant Browser",
     "productName": "Ant Browser",
-    "productVersion": "1.8.1",
-    "copyright": "Copyright © 2026",
+    "productVersion": "1.8.2",
+    "copyright": "Copyright © 2026 junjunni",
     "comments": "面向多账号隔离、代理绑定和本地环境管理的桌面浏览器工具"
   },
   "nsisType": "multiple",

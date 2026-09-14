@@ -6,7 +6,7 @@
 [![Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20Linux%20%7C%20macOS-blue)](https://github.com/xinyuzjj/Ant-Browser/releases)
 [![Issues](https://img.shields.io/github/issues/xinyuzjj/Ant-Browser)](https://github.com/xinyuzjj/Ant-Browser/issues)
 
-当前版本：`1.8.1` · 2026-09-14
+当前版本：`1.8.2` · 2026-09-14
 
 ## 推荐内核项目
 
@@ -296,7 +296,7 @@ bat\publish.bat -Target WINDOWS -WindowsFormat BOTH
 
 两种触发方式：
 
-- **推送标签**：`git tag v1.8.1 && git push origin v1.8.1`，自动构建并创建对应版本的 Release。
+- **推送标签**：`git tag v1.8.2 && git push origin v1.8.2`，自动构建并创建对应版本的 Release。
 - **手动触发**：在 `Actions > Publish Windows Packages > Run workflow` 中填写版本号，并勾选是否创建 Release。
 
 产物包含 `AntBrowser-Setup-<version>.exe`（NSIS 安装包）和 `AntBrowser-<version>-windows-amd64-portable.zip`（便携包），同时作为 Actions Artifact 保留，方便在不发 Release 的情况下取用。
